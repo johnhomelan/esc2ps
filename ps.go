@@ -5,6 +5,26 @@ import (
 	"io"
 )
 
+// getRGBColor maps Epson color ribbon numbers to RGB float64 components.
+func getRGBColor(color int) (r, g, b float64) {
+	switch color {
+	case 1: // Magenta
+		return 1.0, 0.0, 1.0
+	case 2: // Cyan
+		return 0.0, 1.0, 1.0
+	case 3: // Violet
+		return 0.5, 0.0, 1.0
+	case 4: // Yellow
+		return 1.0, 1.0, 0.0
+	case 5: // Orange
+		return 1.0, 0.5, 0.0
+	case 6: // Green
+		return 0.0, 0.8, 0.0
+	default: // 0: Black, and other invalid indices
+		return 0.0, 0.0, 0.0
+	}
+}
+
 // escapePSString escapes parentheses and backslashes, and converts non-printable characters to octal escapes.
 func escapePSString(s string) string {
 	var result []byte
@@ -62,6 +82,9 @@ func getPSFontName(font FontInfo) string {
 
 // GeneratePostScript converts the parsed pages into a PostScript file and writes it to w.
 func GeneratePostScript(pages []*Page, w io.Writer) error {
+	// Standard Epson Top-of-Form margin is 8.5 mm (approx 24 PostScript points)
+	const tofMarginPoints = 24.0
+
 	// Write standard EPS/PS DSC headers
 	io.WriteString(w, "%!PS-Adobe-3.0\n")
 	io.WriteString(w, "%%Creator: esc2ps (Go)\n")
@@ -117,13 +140,14 @@ func GeneratePostScript(pages []*Page, w io.Writer) error {
 		var currentFontName string
 		var currentFontSize float64
 		var currentFontMatrix string
+		currentColor := 0
 
 		for _, item := range page.Items {
 			switch it := item.(type) {
 			case *TextItem:
 				// Map coordinates: Epson top-left (0,0) to PS bottom-left (0,0)
 				ptX := float64(it.X) / 300.0
-				ptY := float64(page.Height-it.Y) / 300.0
+				ptY := (float64(page.Height-it.Y) / 300.0) - tofMarginPoints
 
 				// Handle sub/superscript adjustments
 				fontSize := it.Font.Size
@@ -135,6 +159,13 @@ func GeneratePostScript(pages []*Page, w io.Writer) error {
 					// Subscript: shrink and shift down
 					fontSize *= 0.6
 					ptY -= it.Font.Size * 0.15
+				}
+
+				// Set color if changed
+				if it.Font.Color != currentColor {
+					r, g, b := getRGBColor(it.Font.Color)
+					fmt.Fprintf(w, "%f %f %f setrgbcolor\n", r, g, b)
+					currentColor = it.Font.Color
 				}
 
 				// Font styling
@@ -243,7 +274,7 @@ func GeneratePostScript(pages []*Page, w io.Writer) error {
 				// In PS, coordinates are bottom-left.
 				// Bottom-left of image on page:
 				ptX := float64(it.X) / 300.0
-				ptYTop := float64(page.Height-it.Y) / 300.0
+				ptYTop := (float64(page.Height-it.Y) / 300.0) - tofMarginPoints
 				hUnitsPoints := float64(it.Height) / 300.0
 				wUnitsPoints := float64(it.Width) / 300.0
 				ptYBottom := ptYTop - hUnitsPoints

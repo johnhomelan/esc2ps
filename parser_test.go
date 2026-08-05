@@ -207,3 +207,92 @@ func TestPostScriptGeneration(t *testing.T) {
 		t.Errorf("Expected showpage command")
 	}
 }
+
+func TestColorPrinting(t *testing.T) {
+	// ESC r n selects color: 0=black, 1=magenta, 2=cyan, etc.
+	var buf bytes.Buffer
+	buf.WriteString("BlackText ")
+	buf.Write([]byte{0x1B, 'r', 1}) // Magenta
+	buf.WriteString("MagentaText ")
+	buf.Write([]byte{0x1B, 'r', 2}) // Cyan
+	buf.WriteString("CyanText")
+
+	pages, err := Parse(&buf)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	if len(pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(pages))
+	}
+
+	page := pages[0]
+	// Since color is a property of FontInfo, each color change results in a separate TextItem.
+	// 3 text items: "BlackText ", "MagentaText ", "CyanText"
+	if len(page.Items) != 3 {
+		t.Fatalf("Expected 3 items, got %d", len(page.Items))
+	}
+
+	// Verify items
+	ti0 := page.Items[0].(*TextItem)
+	if ti0.Font.Color != 0 {
+		t.Errorf("Expected first item to be color 0 (black), got %d", ti0.Font.Color)
+	}
+
+	ti1 := page.Items[1].(*TextItem)
+	if ti1.Font.Color != 1 {
+		t.Errorf("Expected second item to be color 1 (magenta), got %d", ti1.Font.Color)
+	}
+
+	ti2 := page.Items[2].(*TextItem)
+	if ti2.Font.Color != 2 {
+		t.Errorf("Expected third item to be color 2 (cyan), got %d", ti2.Font.Color)
+	}
+
+	// Generate PS and verify color codes are present
+	var psBuf bytes.Buffer
+	if err := GeneratePostScript(pages, &psBuf); err != nil {
+		t.Fatalf("Failed to generate PS: %v", err)
+	}
+
+	psOutput := psBuf.String()
+	// Magenta is 1.0 0.0 1.0 setrgbcolor
+	if !strings.Contains(psOutput, "1.000000 0.000000 1.000000 setrgbcolor") {
+		t.Errorf("Expected magenta color command in PostScript")
+	}
+	// Cyan is 0.0 1.0 1.0 setrgbcolor
+	if !strings.Contains(psOutput, "0.000000 1.000000 1.000000 setrgbcolor") {
+		t.Errorf("Expected cyan color command in PostScript")
+	}
+}
+
+func TestInitializePrinterEscAt(t *testing.T) {
+	// ESC @ is called at start and end of document. Ensure pages are not wiped out.
+	var buf bytes.Buffer
+	buf.Write([]byte{0x1B, '@'}) // Initialize printer at start
+	buf.WriteString("PageContent")
+	buf.Write([]byte{0x1B, '@'}) // Initialize printer at end
+
+	pages, err := Parse(&buf)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if len(pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(pages))
+	}
+
+	page := pages[0]
+	if len(page.Items) != 1 {
+		t.Fatalf("Expected 1 item, got %d", len(page.Items))
+	}
+
+	textItem, ok := page.Items[0].(*TextItem)
+	if !ok {
+		t.Fatalf("Expected first item to be a TextItem")
+	}
+
+	if textItem.Text != "PageContent" {
+		t.Errorf("Expected 'PageContent', got '%s'", textItem.Text)
+	}
+}

@@ -7,8 +7,10 @@
 ## Features
 
 - **Text and Font Styling**: Supports Roman, SansSerif, and Courier typefaces with attributes like Bold, Italic, Underline, Double-strike, Subscript, Superscript, Double-width, Double-height, and Condensed formatting.
+- **Color Printing Support**: Fully emulates standard Epson 7-color ribbons (via `ESC r n`), accurately mapping Black, Magenta, Cyan, Violet, Yellow, Orange, and Green to standard RGB color outputs in the PostScript canvas.
 - **Accurate Text Layout**: Emulates physical monospaced grids (10, 12, 15 CPI) as well as proportional spacing with high accuracy.
 - **Robust Control Code Support**: Supports form feeds, line feeds, carriage returns, vertical and horizontal tabs, and absolute/relative backspacing/spacing commands.
+- **User-Defined Character Handling**: Gracefully handles, parses, and skips user-defined/custom character font definitions (`ESC &` and `ESC %`) to prevent binary stream corruption, maintaining parser accuracy for surrounding text and layout.
 - **Raster and Bit Image Graphics**: Parses legacy column-oriented dot-matrix graphics (8-pin and 24-pin bit image modes) as well as modern Epson ESC/P2 raster graphics (`ESC .`), converting them on-the-fly to row-oriented bitmaps.
 - **Optimized PostScript Output**: Produces clean Document Structuring Conventions (DSC) PostScript. Incorporates performance-optimized prologue macros for exact character-by-character positioning and underline rendering to prevent visual drifting.
 - **Standard Stream Pipeline**: Works seamlessly as a standalone CLI tool or inside UNIX pipe environments using stdin and stdout.
@@ -100,6 +102,45 @@ To clean up all build artifacts, run:
 ```bash
 make clean
 ```
+---
+
+## Test pages
+
+ 
+  ┌────────────────────┬────────────────────────────────────────────────────────────────────────┐
+  │        File        │                             What it tests                              │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 01-plain.prn       │ Bare text, mirrors what PSTEST.BBC actually sends                      │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 02-bold-italic.prn │ Bold, italic, and combined                                             │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 03-underline.prn   │ Underline, double-strike, combinations                                 │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 04-pitch.prn       │ 10/12/15 CPI, condensed, double-width                                  │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 05-linespacing.prn │ 1/6", 1/8", n/216", n/60" spacing                                      │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 06-tabs.prn        │ Custom tab stops and default tabs after reset                          │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 07-overprint.prn   │ CR without LF — overprint/strikethrough                                │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 08-margins.prn     │ Left and right margin commands                                         │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 09-fonts.prn       │ Typeface selection (Roman, Sans, Courier, etc.)                        │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 10-quality.prn     │ Draft vs NLQ mode                                                      │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 11-graphics.prn    │ 9-pin single-density bit image (bar, diagonal, checkerboard)           │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 12-reset.prn       │ ESC @ mid-document clears all attributes                               │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 13-multipage.prn   │ Three pages with form feeds                                            │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 14-letter.prn      │ Realistic mixed-format document                                        │
+  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ 15-edge.prn        │ Empty page, LF-only endings, overprint, >80-char lines, no trailing FF │
+  └────────────────────┴────────────────────────────────────────────────────────────────────────┘
+
 
 ---
 
@@ -160,11 +201,25 @@ Once parsing completes, `GeneratePostScript(pages, io.Writer)` writes standard D
   - `/draw_underline`: Draws lines dynamically adjusted to the baseline and width of the preceding text.
 - **Image Rendering**: Image items (`ImageItem`) are drawn by positioning their bounding box, translating coordinates, and filtering hex encoded bitmap patterns through `/ASCIIHexDecode filter image` directly into the stream.
 
+#### 4. Color Ribbon Emulation & PostScript Mapping
+`esc2ps` supports the multi-color ribbon emulation standard `ESC r n`. 
+- **State Integration**: Color numbers `0-6` are parsed inside `parser.go` and embedded directly into `FontInfo`. Since sequential `TextItem` grouping compares font properties, color transitions automatically partition text sequences, ensuring proper local styling.
+- **RGB Code Generation**: `ps.go` translates color codes to standard PostScript RGB values using `%f %f %f setrgbcolor` directives. To optimize performance, redundant color adjustments are filtered out via state-tracking variables.
+- **Mappings Table**:
+  - `0`: Black (`0.0 0.0 0.0`)
+  - `1`: Magenta (`1.0 0.0 1.0`)
+  - `2`: Cyan (`0.0 1.0 1.0`)
+  - `3`: Violet (`0.5 0.0 1.0`)
+  - `4`: Yellow (`1.0 1.0 0.0`)
+  - `5`: Orange (`1.0 0.5 0.0`)
+  - `6`: Green (`0.0 0.8 0.0`)
+- **Inherited Decoration**: Text underlines (drawn via `/draw_underline`) inherit the active color in the PostScript graphics state automatically.
+
 ---
 
 ## Extending the Project
 
 Developers wishing to extend `esc2ps` can focus on:
 1. **Adding Support for New Escape Commands**: Update the `handleESC` method inside `parser.go` to match commands documented in Epson’s ESC/P2 reference manuals.
-2. **Color Printing**: Although colors are currently parsed but skipped in `handleESC` (e.g., `ESC r n`), support can be added by introducing color state tracking to `ParserState` and generating corresponding PostScript color operations (such as `setrgbcolor`).
+2. **User-Defined Characters**: Expand the parser/renderer to output custom font glyph structures (such as Type 3 PostScript fonts or inline image masks) for custom/user-defined character definitions (`ESC &` / `ESC %`).
 3. **Advanced Test Assertions**: Extend `parser_test.go` to cover edge-case escape sequence combinations, ensuring no regressions are introduced into the parser state machine.

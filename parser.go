@@ -34,6 +34,7 @@ type FontInfo struct {
 	DoubleWidth  bool
 	DoubleHeight bool
 	Condensed    bool
+	Color        int  // 0: Black, 1: Magenta, 2: Cyan, 3: Violet, 4: Yellow, 5: Orange, 6: Green
 }
 
 // TextItem represents a string of text printed at a specific position.
@@ -114,6 +115,7 @@ type ParserState struct {
 	DoubleHeight        bool
 	Condensed           bool
 	IntercharacterSpace int // in 1/21600 inch
+	Color               int // 0: Black, 1: Magenta, 2: Cyan, 3: Violet, 4: Yellow, 5: Orange, 6: Green
 
 	// Temporary states
 	DoubleWidthOneLine bool
@@ -168,6 +170,7 @@ func (s *ParserState) activeFont() FontInfo {
 		DoubleWidth:  s.DoubleWidth || s.DoubleWidthOneLine,
 		DoubleHeight: s.DoubleHeight,
 		Condensed:    s.Condensed,
+		Color:        s.Color,
 	}
 }
 
@@ -430,7 +433,11 @@ func (s *ParserState) handleESC(r io.Reader) error {
 		s.Italic = false
 
 	case '@': // ESC @ (Initialize printer)
+		pages := s.Pages
+		currentPage := s.CurrentPage
 		*s = *NewParserState()
+		s.Pages = pages
+		s.CurrentPage = currentPage
 
 	case 'A': // ESC A n (Line spacing n/60 inch)
 		val, err := readByte(r)
@@ -655,7 +662,11 @@ func (s *ParserState) handleESC(r io.Reader) error {
 		s.Proportional = val == 1 || val == 49
 
 	case 'r': // ESC r n (Select color)
-		_, _ = readByte(r) // skip color selection
+		val, err := readByte(r)
+		if err != nil {
+			return err
+		}
+		s.Color = int(val)
 
 	case 't': // ESC t n (Select character table)
 		_, _ = readByte(r)
