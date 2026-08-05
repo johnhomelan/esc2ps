@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 )
@@ -46,6 +47,9 @@ func escapePSString(s string) string {
 
 // getPSFontName maps the Epson font settings to standard PostScript core fonts.
 func getPSFontName(font FontInfo) string {
+	if font.UserFont {
+		return "EpsonUserFont"
+	}
 	switch font.Typeface {
 	case "Roman":
 		if font.Bold && font.Italic {
@@ -125,6 +129,61 @@ func GeneratePostScript(pages []*Page, w io.Writer) error {
 	fmt.Fprintln(w, "    stroke")
 	fmt.Fprintln(w, "    grestore")
 	fmt.Fprintln(w, "} def")
+
+	// Check if we need to define the user-defined font
+	var hasUserFont bool
+	var userChars map[byte]*UserChar
+	for _, page := range pages {
+		if len(page.UserChars) > 0 {
+			hasUserFont = true
+			userChars = page.UserChars
+			break
+		}
+	}
+
+	if hasUserFont {
+		io.WriteString(w, "% --- EpsonUserFont Definition (Type 3) ---\n")
+		io.WriteString(w, "8 dict begin\n")
+		io.WriteString(w, "  /FontType 3 def\n")
+		io.WriteString(w, "  /FontMatrix [ 0.041667 0 0 0.041667 0 0 ] def\n")
+		io.WriteString(w, "  /FontBBox [ 0 -6 24 18 ] def\n")
+		io.WriteString(w, "  /Encoding 256 array def\n")
+		io.WriteString(w, "  0 1 255 { Encoding exch /.notdef put } for\n")
+		
+		for code := range userChars {
+			fmt.Fprintf(w, "  Encoding %d /c%d put\n", code, code)
+		}
+		
+		io.WriteString(w, "  /CharStrings 256 dict def\n")
+		io.WriteString(w, "  CharStrings begin\n")
+		io.WriteString(w, "    /.notdef { 0 0 setcharwidth } def\n")
+		
+		for code, char := range userChars {
+			var hexBuf bytes.Buffer
+			for _, b := range char.Bitmap {
+				hexBuf.WriteString(fmt.Sprintf("%02X", b))
+			}
+			fmt.Fprintf(w, "    /c%d {\n", code)
+			fmt.Fprintf(w, "      %d 0 0 -6 %d 18 setcachedevice\n", char.Width, char.Width)
+			fmt.Fprintf(w, "      gsave\n")
+			fmt.Fprintf(w, "      0 -6 translate\n")
+			fmt.Fprintf(w, "      %d 24 true [ %d 0 0 -24 0 24 ] { <%s> } imagemask\n", char.Width, char.Width, hexBuf.String())
+			fmt.Fprintf(w, "      grestore\n")
+			fmt.Fprintf(w, "    } def\n")
+		}
+		io.WriteString(w, "  end\n")
+		
+		io.WriteString(w, "  /BuildChar {\n")
+		io.WriteString(w, "    2 copy exch /Encoding get exch get\n")
+		io.WriteString(w, "    3 index /CharStrings get exch get\n")
+		io.WriteString(w, "    3 1 roll pop pop\n")
+		io.WriteString(w, "    exec\n")
+		io.WriteString(w, "  } def\n")
+		io.WriteString(w, "  currentdict\n")
+		io.WriteString(w, "end\n")
+		io.WriteString(w, "/EpsonUserFont exch definefont pop\n\n")
+	}
+
 	io.WriteString(w, "%%EndPrologue\n")
 	fmt.Fprintln(w, "")
 

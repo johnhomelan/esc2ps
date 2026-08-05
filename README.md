@@ -10,7 +10,7 @@
 - **Color Printing Support**: Fully emulates standard Epson 7-color ribbons (via `ESC r n`), accurately mapping Black, Magenta, Cyan, Violet, Yellow, Orange, and Green to standard RGB color outputs in the PostScript canvas.
 - **Accurate Text Layout**: Emulates physical monospaced grids (10, 12, 15 CPI) as well as proportional spacing with high accuracy.
 - **Robust Control Code Support**: Supports form feeds, line feeds, carriage returns, vertical and horizontal tabs, and absolute/relative backspacing/spacing commands.
-- **User-Defined Character Handling**: Gracefully handles, parses, and skips user-defined/custom character font definitions (`ESC &` and `ESC %`) to prevent binary stream corruption, maintaining parser accuracy for surrounding text and layout.
+- **User-Defined Character (Custom Font) Support**: Parses custom character/font definitions (`ESC &` and `ESC %`) and dynamically generates a standard PostScript Type 3 (user-defined) font (`/EpsonUserFont`) on-the-fly, rendering them flawlessly via `imagemask` with full color support.
 - **Raster and Bit Image Graphics**: Parses legacy column-oriented dot-matrix graphics (8-pin and 24-pin bit image modes) as well as modern Epson ESC/P2 raster graphics (`ESC .`), converting them on-the-fly to row-oriented bitmaps.
 - **Optimized PostScript Output**: Produces clean Document Structuring Conventions (DSC) PostScript. Incorporates performance-optimized prologue macros for exact character-by-character positioning and underline rendering to prevent visual drifting.
 - **Standard Stream Pipeline**: Works seamlessly as a standalone CLI tool or inside UNIX pipe environments using stdin and stdout.
@@ -187,6 +187,7 @@ The core parsing is executed inside `Parse(io.Reader)`, which processes the inco
 - **State Machine (`ParserState`)**: Tracks printer configurations such as typeface, line spacing, margins, active character pitch (condensed, proportional, 10/12/15 CPI), absolute and relative cursor coordinates ($X$ and $Y$ in unit space), and character modification flags (bold, italic, underline, superscript/subscript).
 - **Page Laziness**: When the parser encounters printable characters, it lazily initializes pages and items. If a vertical shift (such as form feeds or text overflow) crosses page boundaries, the state's `CurrentPage` is set to `nil`, pushing subsequent operations to a new page.
 - **Text Coalescing**: To generate compact and efficient outputs, the parser coalesces sequential text characters into a single `TextItem` if they share the same line, styling properties, and matching horizontal grid slots. Gaps are automatically backfilled with space characters.
+- **User-Defined Characters**: Custom character definitions (`ESC &`) are parsed by `defineUserDefinedChars`, translating the 24-vertical-dot matrix per column into row-by-row monochrome bitmap formats stored in the `UserChars` map. When user-defined font mode is enabled (`ESC % 1`), characters are parsed and flagged with `UserFont: true` inside their `FontInfo`.
 - **Graphics Handling**: 
   - Dot matrix printheads print vertically column-by-column (e.g. 8-dot or 24-dot slices). `addBitImage8` and `addBitImage24` handle these sequences, mapping the incoming vertical printhead scanlines into standard row-by-row monochrome bitmap buffers suitable for traditional modern display.
   - Modern raster graphics (`ESC .`) are parsed by `handleRasterGraphics`, preserving the exact dimensions and compression settings specified by the driver.
@@ -199,6 +200,7 @@ Once parsing completes, `GeneratePostScript(pages, io.Writer)` writes standard D
 - **Prologue Procedures**: To optimize file size and rendering accuracy, the output defines custom procedures in its header:
   - `/S`: Standardizes character-by-character drawing. It takes $(X, Y)$ absolute starting coordinates, a text string, and an exact character-width advance in points. It loops through the characters, placing each precisely along the monospaced grid, eliminating character drifting.
   - `/draw_underline`: Draws lines dynamically adjusted to the baseline and width of the preceding text.
+- **Type 3 Custom Fonts (`/EpsonUserFont`)**: If custom characters are defined in the document, `GeneratePostScript` injects a standard PostScript Type 3 font dictionary. The font defines a `/FontMatrix` scaled to the 24-dot cell layout, maps custom character codes via `/Encoding`, and draws each glyph using `/setcachedevice` and `/imagemask`.
 - **Image Rendering**: Image items (`ImageItem`) are drawn by positioning their bounding box, translating coordinates, and filtering hex encoded bitmap patterns through `/ASCIIHexDecode filter image` directly into the stream.
 
 #### 4. Color Ribbon Emulation & PostScript Mapping
@@ -221,5 +223,5 @@ Once parsing completes, `GeneratePostScript(pages, io.Writer)` writes standard D
 
 Developers wishing to extend `esc2ps` can focus on:
 1. **Adding Support for New Escape Commands**: Update the `handleESC` method inside `parser.go` to match commands documented in Epson’s ESC/P2 reference manuals.
-2. **User-Defined Characters**: Expand the parser/renderer to output custom font glyph structures (such as Type 3 PostScript fonts or inline image masks) for custom/user-defined character definitions (`ESC &` / `ESC %`).
+2. **Advanced Custom Font Metrics**: Extend the `/EpsonUserFont` Type 3 font definition to support proportional custom glyph widths, horizontal scaling, and oblique matrix transformations for bold/italic custom character styling.
 3. **Advanced Test Assertions**: Extend `parser_test.go` to cover edge-case escape sequence combinations, ensuring no regressions are introduced into the parser state machine.

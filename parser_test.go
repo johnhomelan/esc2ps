@@ -296,3 +296,74 @@ func TestInitializePrinterEscAt(t *testing.T) {
 		t.Errorf("Expected 'PageContent', got '%s'", textItem.Text)
 	}
 }
+
+func TestUserDefinedCharacters(t *testing.T) {
+	var buf bytes.Buffer
+	// Define custom char 65 ('A')
+	buf.Write([]byte{0x1B, '&', 0, 65, 65})
+	buf.Write([]byte{0x00, 0x02}) // attr=0, width=2
+	buf.Write([]byte{0xFF, 0x00, 0xAA, 0x00, 0xFF, 0x55}) // 6 bytes pattern
+
+	// Select user defined character set
+	buf.Write([]byte{0x1B, '%', 1})
+	buf.WriteString("A")
+
+	// Select standard character set
+	buf.Write([]byte{0x1B, '%', 0})
+	buf.WriteString("A")
+
+	pages, err := Parse(&buf)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if len(pages) != 1 {
+		t.Fatalf("Expected 1 page, got %d", len(pages))
+	}
+
+	page := pages[0]
+	// Should have 2 items: custom "A" and standard "A"
+	if len(page.Items) != 2 {
+		t.Fatalf("Expected 2 items, got %d", len(page.Items))
+	}
+
+	ti0 := page.Items[0].(*TextItem)
+	if !ti0.Font.UserFont {
+		t.Errorf("Expected first item to use UserFont")
+	}
+
+	ti1 := page.Items[1].(*TextItem)
+	if ti1.Font.UserFont {
+		t.Errorf("Expected second item to NOT use UserFont")
+	}
+
+	// Verify the UserChar exists in page metadata
+	if len(page.UserChars) != 1 {
+		t.Fatalf("Expected 1 defined user character on the page, got %d", len(page.UserChars))
+	}
+
+	uc := page.UserChars[65]
+	if uc == nil {
+		t.Fatalf("Custom character 65 not found")
+	}
+	if uc.Width != 2 {
+		t.Errorf("Expected width 2, got %d", uc.Width)
+	}
+
+	// Verify PostScript output contains the custom font definition
+	var psBuf bytes.Buffer
+	if err := GeneratePostScript(pages, &psBuf); err != nil {
+		t.Fatalf("Failed to generate PS: %v", err)
+	}
+
+	psOutput := psBuf.String()
+	if !strings.Contains(psOutput, "/EpsonUserFont exch definefont pop") {
+		t.Errorf("Expected EpsonUserFont definition in PostScript")
+	}
+	if !strings.Contains(psOutput, "/EpsonUserFont findfont") {
+		t.Errorf("Expected EpsonUserFont font selection in PostScript")
+	}
+	if !strings.Contains(psOutput, "imagemask") {
+		t.Errorf("Expected imagemask command inside custom glyph definition")
+	}
+}

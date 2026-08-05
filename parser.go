@@ -35,6 +35,7 @@ type FontInfo struct {
 	DoubleHeight bool
 	Condensed    bool
 	Color        int  // 0: Black, 1: Magenta, 2: Cyan, 3: Violet, 4: Yellow, 5: Orange, 6: Green
+	UserFont     bool
 }
 
 // TextItem represents a string of text printed at a specific position.
@@ -62,9 +63,10 @@ func (i *ImageItem) IsItem() {}
 
 // Page represents a single printed page.
 type Page struct {
-	Width  int // Page width in 1/21600 inch
-	Height int // Page height in 1/21600 inch
-	Items  []Item
+	Width     int // Page width in 1/21600 inch
+	Height    int // Page height in 1/21600 inch
+	Items     []Item
+	UserChars map[byte]*UserChar // Keep track of custom characters defined in the document
 }
 
 // UserChar represents a custom-defined character bitmap.
@@ -146,8 +148,9 @@ func NewParserState() *ParserState {
 func (s *ParserState) getPage() *Page {
 	if s.CurrentPage == nil {
 		s.CurrentPage = &Page{
-			Width:  s.PageWidth,
-			Height: s.PageHeight,
+			Width:     s.PageWidth,
+			Height:    s.PageHeight,
+			UserChars: make(map[byte]*UserChar),
 		}
 		s.Pages = append(s.Pages, s.CurrentPage)
 		s.X = s.LeftMargin
@@ -221,41 +224,51 @@ func (s *ParserState) addText(text string) {
 	if text == "" {
 		return
 	}
-	page := s.getPage()
-	font := s.activeFont()
-	w := s.charWidth()
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		chStr := string(ch)
+		page := s.getPage()
 
-	// Try to append to the last item on the page if the font, row and alignment match
-	if len(page.Items) > 0 {
-		if lastText, ok := page.Items[len(page.Items)-1].(*TextItem); ok {
-			if lastText.Font == font && lastText.Y == s.Y {
-				expectedX := lastText.X + len(lastText.Text)*w
-				if lastText.X <= s.X && s.X <= expectedX+w {
-					// Fill gap with spaces if needed
-					gap := s.X - expectedX
-					if gap > 0 && w > 0 {
-						spaces := gap / w
-						for i := 0; i < spaces; i++ {
-							lastText.Text += " "
+		font := s.activeFont()
+		font.UserFont = s.UseUserDefinedChars && s.UserChars[ch] != nil
+
+		w := s.charWidth()
+
+		// Try to append to the last item on the page if the font, row and alignment match
+		coalesced := false
+		if len(page.Items) > 0 {
+			if lastText, ok := page.Items[len(page.Items)-1].(*TextItem); ok {
+				if lastText.Font == font && lastText.Y == s.Y {
+					expectedX := lastText.X + len(lastText.Text)*w
+					if lastText.X <= s.X && s.X <= expectedX+w {
+						// Fill gap with spaces if needed
+						gap := s.X - expectedX
+						if gap > 0 && w > 0 {
+							spaces := gap / w
+							for idx := 0; idx < spaces; idx++ {
+								lastText.Text += " "
+							}
 						}
+						lastText.Text += chStr
+						s.X += w
+						coalesced = true
 					}
-					lastText.Text += text
-					s.X += len(text) * w
-					return
 				}
 			}
 		}
-	}
 
-	// Create new text item
-	item := &TextItem{
-		X:    s.X,
-		Y:    s.Y,
-		Text: text,
-		Font: font,
+		if !coalesced {
+			// Create new text item
+			item := &TextItem{
+				X:    s.X,
+				Y:    s.Y,
+				Text: chStr,
+				Font: font,
+			}
+			page.Items = append(page.Items, item)
+			s.X += w
+		}
 	}
-	page.Items = append(page.Items, item)
-	s.X += len(text) * w
 }
 
 // Parse parses ESC/P2 data from the reader and returns a list of pages.
@@ -327,6 +340,11 @@ func Parse(r io.Reader) ([]*Page, error) {
 		}
 	}
 
+	// Ensure all pages have the final complete set of UserChars
+	for _, page := range s.Pages {
+		page.UserChars = s.UserChars
+	}
+
 	return s.Pages, nil
 }
 
@@ -392,11 +410,17 @@ func (s *ParserState) handleESC(r io.Reader) error {
 		s.X = s.LeftMargin + pos*(21600/s.HorizUnit)
 
 	case '%': // ESC % n (Select user-defined character set)
-		_, _ = readByte(r) // skip
+		val, err := readByte(r)
+		if err != nil {
+			return err
+		}
+		s.UseUserDefinedChars = val == 1 || val == 49
 
 	case '&': // ESC & (Define user-defined characters)
 		// ESC & 0x00 first last [data]
-		_ = s.skipUserDefinedChars(r)
+		if err := s.defineUserDefinedChars(r); err != nil {
+			return err
+		}
 
 	case '*': // ESC * m nL nH (Select bit image)
 		if err := s.handleBitImage(r); err != nil {
@@ -695,51 +719,76 @@ func (s *ParserState) handleESC(r io.Reader) error {
 	return nil
 }
 
-// skipUserDefinedChars consumes definition data for ESC &
-func (s *ParserState) skipUserDefinedChars(r io.Reader) error {
+// defineUserDefinedChars parses and registers custom character definitions for ESC &
+func (s *ParserState) defineUserDefinedChars(r io.Reader) error {
 	// Format: ESC & 0x00 first last [data...]
-	// data is: 1 byte attribute, then cols bytes...
-	// For simplicity, let's read the header and skip.
-	_ = make([]byte, 3)
-	header := make([]byte, 3)
-	if _, err := io.ReadFull(r, header); err != nil {
+	_, err := readByte(r) // skip 0x00 / format byte
+	if err != nil {
 		return err
 	}
-	first := header[1]
-	last := header[2]
+	first, err := readByte(r)
+	if err != nil {
+		return err
+	}
+	last, err := readByte(r)
+	if err != nil {
+		return err
+	}
+
 	count := int(last - first + 1)
 	if count < 0 {
 		return nil
 	}
-	// Typically 1 byte for attribute, then 11 or more bytes for patterns.
-	// Since the exact size per character can vary or depend on draft/LQ, we can skip or read.
-	// To avoid hanging, we should expect 12 bytes per character in draft, or 3 * LQ.
-	// Actually, ESC & is rarely used or is followed by fixed width. Let's read 1 byte attributes,
-	// then we look at the attributes to see how many data columns there are, or we just skip standard sizes.
-	// Standard size is: attribute (1 byte) + columns (1 byte) + columns of data.
-	// Let's implement dynamic skipping:
+
 	for i := 0; i < count; i++ {
+		charCode := first + byte(i)
 		attr, err := readByte(r)
 		if err != nil {
 			return err
 		}
-		// Typically, the attribute byte contains size info, or next is columns.
-		// In standard Epson, ESC & 0 has 1 byte attrib, 1 byte start, 1 byte end,
-		// and each char definition has 1 byte (attr) + 11 bytes (data) in 9-pin,
-		// or 1 byte (attr) + 1 byte (width) + 3*width bytes in 24-pin.
-		// Let's assume 24-pin custom char format: 1 byte attr + 1 byte width + 3*width bytes.
-		// Let's read the width byte:
 		w, err := readByte(r)
 		if err != nil {
 			return err
 		}
-		// Read 3 * w bytes
-		dummy := make([]byte, int(w)*3)
-		if _, err := io.ReadFull(r, dummy); err != nil {
-			// If it fails, maybe it was the 9-pin format where it's fixed 11 bytes.
-			// But 24-pin (ESC/P2) is standard.
-			_ = attr
+
+		cols := int(w)
+		data := make([]byte, cols*3)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return err
 		}
+
+		// Convert 24 vertical dots per column to row-by-row bitmap (24 rows high)
+		rowBytes := (cols + 7) / 8
+		bitmap := make([]byte, 24*rowBytes)
+
+		for col := 0; col < cols; col++ {
+			b0 := data[3*col]
+			b1 := data[3*col+1]
+			b2 := data[3*col+2]
+
+			for row := 0; row < 24; row++ {
+				var bit byte
+				if row < 8 {
+					bit = (b0 >> (7 - uint(row))) & 1
+				} else if row < 16 {
+					bit = (b1 >> (7 - uint(row-8))) & 1
+				} else {
+					bit = (b2 >> (7 - uint(row-16))) & 1
+				}
+
+				if bit != 0 {
+					byteIdx := row*rowBytes + (col / 8)
+					bitIdx := 7 - uint(col%8)
+					bitmap[byteIdx] |= (1 << bitIdx)
+				}
+			}
+		}
+
+		s.UserChars[charCode] = &UserChar{
+			Width:  cols,
+			Bitmap: bitmap,
+		}
+		_ = attr
 	}
 	return nil
 }
