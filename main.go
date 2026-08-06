@@ -26,7 +26,7 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Println("esc2ps version 1.0.0")
+		fmt.Println("esc2ps version 0.1.2")
 		return
 	}
 
