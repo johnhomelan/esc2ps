@@ -106,40 +106,24 @@ make clean
 
 ## Test pages
 
- 
-  ┌────────────────────┬────────────────────────────────────────────────────────────────────────┐
-  │        File        │                             What it tests                              │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 01-plain.prn       │ Bare text, mirrors what PSTEST.BBC actually sends                      │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 02-bold-italic.prn │ Bold, italic, and combined                                             │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 03-underline.prn   │ Underline, double-strike, combinations                                 │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 04-pitch.prn       │ 10/12/15 CPI, condensed, double-width                                  │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 05-linespacing.prn │ 1/6", 1/8", n/216", n/60" spacing                                      │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 06-tabs.prn        │ Custom tab stops and default tabs after reset                          │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 07-overprint.prn   │ CR without LF — overprint/strikethrough                                │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 08-margins.prn     │ Left and right margin commands                                         │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 09-fonts.prn       │ Typeface selection (Roman, Sans, Courier, etc.)                        │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 10-quality.prn     │ Draft vs NLQ mode                                                      │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 11-graphics.prn    │ 9-pin single-density bit image (bar, diagonal, checkerboard)           │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 12-reset.prn       │ ESC @ mid-document clears all attributes                               │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 13-multipage.prn   │ Three pages with form feeds                                            │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 14-letter.prn      │ Realistic mixed-format document                                        │
-  ├────────────────────┼────────────────────────────────────────────────────────────────────────┤
-  │ 15-edge.prn        │ Empty page, LF-only endings, overprint, >80-char lines, no trailing FF │
-  └────────────────────┴────────────────────────────────────────────────────────────────────────┘
+| File | What it tests |
+| --- | --- |
+| `01-plain.prn` | Bare text, mirrors what PSTEST.BBC actually sends |
+| `02-bold-italic.prn` | Bold, italic, and combined |
+| `03-underline.prn` | Underline, double-strike, combinations |
+| `04-pitch.prn` | 10/12/15 CPI, condensed, double-width |
+| `05-linespacing.prn` | 1/6", 1/8", n/216", n/60" spacing |
+| `06-tabs.prn` | Custom tab stops and default tabs after reset |
+| `07-overprint.prn` | CR without LF — overprint/strikethrough |
+| `08-margins.prn` | Left and right margin commands |
+| `09-fonts.prn` | Typeface selection (Roman, Sans, Courier, etc.) |
+| `10-quality.prn` | Draft vs NLQ mode |
+| `11-graphics.prn` | 9-pin single-density bit image (bar, diagonal, checkerboard) |
+| `12-reset.prn` | ESC @ mid-document clears all attributes |
+| `13-multipage.prn` | Three pages with form feeds |
+| `14-letter.prn` | Realistic mixed-format document |
+| `15-edge.prn` | Empty page, LF-only endings, overprint, >80-char lines, no trailing FF |
+| `16-charset.prn` | ESC R international character sets (UK £ substitution, USA default) |
 
 
 ---

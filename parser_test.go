@@ -367,3 +367,68 @@ func TestUserDefinedCharacters(t *testing.T) {
 		t.Errorf("Expected imagemask command inside custom glyph definition")
 	}
 }
+
+func TestInternationalCharSetUK(t *testing.T) {
+	// ESC R 3 selects the UK table, which maps '#' (0x23) to '£' (0xA3).
+	var buf bytes.Buffer
+	buf.Write([]byte{0x1B, 'R', 3})
+	buf.WriteString("Price: #5.00")
+
+	pages, err := Parse(&buf)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if len(pages) != 1 || len(pages[0].Items) != 1 {
+		t.Fatalf("Expected 1 page with 1 item, got pages=%d", len(pages))
+	}
+
+	ti, ok := pages[0].Items[0].(*TextItem)
+	if !ok {
+		t.Fatalf("Item 0 is not a TextItem")
+	}
+
+	want := "Price: \xa35.00"
+	if ti.Text != want {
+		t.Errorf("Expected %q (£ as raw byte 0xA3), got %q (bytes: % X)", want, ti.Text, []byte(ti.Text))
+	}
+
+	// The PostScript output must re-encode fonts to ISOLatin1Encoding and
+	// use the -Latin1 font name so byte 0xA3 renders as sterling.
+	var psBuf bytes.Buffer
+	if err := GeneratePostScript(pages, &psBuf); err != nil {
+		t.Fatalf("Failed to generate PS: %v", err)
+	}
+	psOutput := psBuf.String()
+	if !strings.Contains(psOutput, "/Courier-Latin1 findfont") {
+		t.Errorf("Expected Courier-Latin1 font selection in PostScript")
+	}
+	if !strings.Contains(psOutput, "/Encoding ISOLatin1Encoding def") {
+		t.Errorf("Expected ISOLatin1Encoding re-encoding block in PostScript")
+	}
+	if !strings.Contains(psOutput, `\243`) {
+		t.Errorf("Expected octal-escaped byte \\243 (0xA3) for £ in PostScript output")
+	}
+}
+
+func TestInternationalCharSetDefaultUSAUnchanged(t *testing.T) {
+	// CharSet defaults to 0 (USA), which must leave every "national" code
+	// byte untouched - this is the regression guard for plain ESC/P content.
+	var buf bytes.Buffer
+	buf.WriteString("#$@[\\]^`{|}~")
+
+	pages, err := Parse(&buf)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	if len(pages) != 1 || len(pages[0].Items) != 1 {
+		t.Fatalf("Expected 1 page with 1 item, got pages=%d", len(pages))
+	}
+
+	ti := pages[0].Items[0].(*TextItem)
+	want := "#$@[\\]^`{|}~"
+	if ti.Text != want {
+		t.Errorf("Expected default USA set to leave text unchanged: got %q, want %q", ti.Text, want)
+	}
+}

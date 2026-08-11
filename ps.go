@@ -45,7 +45,18 @@ func escapePSString(s string) string {
 	return string(result)
 }
 
+// basePSFonts lists the Adobe base-14 fonts used by getPSFontName, each of
+// which GeneratePostScript re-encodes to ISOLatin1Encoding in the prologue.
+var basePSFonts = []string{
+	"Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic",
+	"Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique",
+	"Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique",
+}
+
 // getPSFontName maps the Epson font settings to standard PostScript core fonts.
+// Returned names (other than EpsonUserFont) carry a "-Latin1" suffix, referring
+// to the ISOLatin1Encoding-reencoded variants GeneratePostScript defines in the
+// prologue (see basePSFonts), so Latin-1 byte values render correctly.
 func getPSFontName(font FontInfo) string {
 	if font.UserFont {
 		return "EpsonUserFont"
@@ -53,33 +64,33 @@ func getPSFontName(font FontInfo) string {
 	switch font.Typeface {
 	case "Roman":
 		if font.Bold && font.Italic {
-			return "Times-BoldItalic"
+			return "Times-BoldItalic-Latin1"
 		} else if font.Bold {
-			return "Times-Bold"
+			return "Times-Bold-Latin1"
 		} else if font.Italic {
-			return "Times-Italic"
+			return "Times-Italic-Latin1"
 		} else {
-			return "Times-Roman"
+			return "Times-Roman-Latin1"
 		}
 	case "SansSerif":
 		if font.Bold && font.Italic {
-			return "Helvetica-BoldOblique"
+			return "Helvetica-BoldOblique-Latin1"
 		} else if font.Bold {
-			return "Helvetica-Bold"
+			return "Helvetica-Bold-Latin1"
 		} else if font.Italic {
-			return "Helvetica-Oblique"
+			return "Helvetica-Oblique-Latin1"
 		} else {
-			return "Helvetica"
+			return "Helvetica-Latin1"
 		}
 	default: // Courier
 		if font.Bold && font.Italic {
-			return "Courier-BoldOblique"
+			return "Courier-BoldOblique-Latin1"
 		} else if font.Bold {
-			return "Courier-Bold"
+			return "Courier-Bold-Latin1"
 		} else if font.Italic {
-			return "Courier-Oblique"
+			return "Courier-Oblique-Latin1"
 		} else {
-			return "Courier"
+			return "Courier-Latin1"
 		}
 	}
 }
@@ -129,6 +140,23 @@ func GeneratePostScript(pages []*Page, w io.Writer) error {
 	fmt.Fprintln(w, "    stroke")
 	fmt.Fprintln(w, "    grestore")
 	fmt.Fprintln(w, "} def")
+	fmt.Fprintln(w, "")
+
+	// Re-encode the base-14 fonts to ISOLatin1Encoding so that Latin-1 byte
+	// values (e.g. 0xA3 for the international-character-set substitutions
+	// applied by ESC R) render as the correct accented/national glyphs
+	// instead of whatever StandardEncoding happens to have at that slot.
+	io.WriteString(w, "% --- Latin-1 re-encoded base fonts ---\n")
+	for _, base := range basePSFonts {
+		fmt.Fprintf(w, "/%s findfont\n", base)
+		fmt.Fprintln(w, "dup length dict begin")
+		fmt.Fprintln(w, "  {1 index /FID ne {def} {pop pop} ifelse} forall")
+		fmt.Fprintln(w, "  /Encoding ISOLatin1Encoding def")
+		fmt.Fprintln(w, "  currentdict")
+		fmt.Fprintln(w, "end")
+		fmt.Fprintf(w, "/%s-Latin1 exch definefont pop\n", base)
+	}
+	fmt.Fprintln(w, "")
 
 	// Check if we need to define the user-defined font
 	var hasUserFont bool

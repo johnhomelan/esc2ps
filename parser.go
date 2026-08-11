@@ -5,6 +5,144 @@ import (
 	"io"
 )
 
+// intlCharSets maps an ESC R international character set index to the
+// substitutions applied to the 12 "national" character codes. Values are
+// Latin-1 (ISO-8859-1) byte codes so they render correctly once ps.go
+// re-encodes the output fonts to ISOLatin1Encoding. Table verified against
+// Epson's ESC/P2 reference manual (identical for sets 0-12 in both the
+// 9-pin ESC/P and ESC/P2 command sets). Set 0 (USA) is the identity mapping
+// and is intentionally omitted - CharSet == 0 skips substitution entirely.
+//
+// Set 7 (Spain I) code 0x23 is officially a peseta sign, which has no
+// Latin-1 representation; it's left unmapped (prints as '#') rather than
+// guessing a misleading substitute. Set 64 (Legal) omits codes 0x7D/0x7E
+// (dagger/trademark) for the same reason.
+var intlCharSets = map[byte]map[byte]byte{
+	1: { // France
+		0x40: 0xE0, // à
+		0x5B: 0xB0, // °
+		0x5C: 0xE7, // ç
+		0x5D: 0xA7, // §
+		0x7B: 0xE9, // é
+		0x7C: 0xF9, // ù
+		0x7D: 0xE8, // è
+		0x7E: 0xA8, // ¨
+	},
+	2: { // Germany
+		0x40: 0xA7, // §
+		0x5B: 0xC4, // Ä
+		0x5C: 0xD6, // Ö
+		0x5D: 0xDC, // Ü
+		0x7B: 0xE4, // ä
+		0x7C: 0xF6, // ö
+		0x7D: 0xFC, // ü
+		0x7E: 0xDF, // ß
+	},
+	3: { // UK
+		0x23: 0xA3, // £
+	},
+	4: { // Denmark I
+		0x5B: 0xC6, // Æ
+		0x5C: 0xD8, // Ø
+		0x5D: 0xC5, // Å
+		0x7B: 0xE6, // æ
+		0x7C: 0xF8, // ø
+		0x7D: 0xE5, // å
+	},
+	5: { // Sweden
+		0x24: 0xA4, // ¤
+		0x40: 0xC9, // É
+		0x5B: 0xC4, // Ä
+		0x5C: 0xD6, // Ö
+		0x5D: 0xC5, // Å
+		0x5E: 0xDC, // Ü
+		0x60: 0xE9, // é
+		0x7B: 0xE4, // ä
+		0x7C: 0xF6, // ö
+		0x7D: 0xE5, // å
+		0x7E: 0xFC, // ü
+	},
+	6: { // Italy
+		0x5B: 0xB0, // °
+		0x5D: 0xE9, // é
+		0x60: 0xF9, // ù
+		0x7B: 0xE0, // à
+		0x7C: 0xF2, // ò
+		0x7D: 0xE8, // è
+		0x7E: 0xEC, // ì
+	},
+	7: { // Spain I (0x23 peseta sign intentionally unmapped, see comment above)
+		0x5B: 0xA1, // ¡
+		0x5C: 0xD1, // Ñ
+		0x5D: 0xBF, // ¿
+		0x7B: 0xA8, // ¨
+		0x7C: 0xF1, // ñ
+	},
+	8: { // Japan (English)
+		0x5C: 0xA5, // ¥
+	},
+	9: { // Norway
+		0x24: 0xA4, // ¤
+		0x40: 0xC9, // É
+		0x5B: 0xC6, // Æ
+		0x5C: 0xD8, // Ø
+		0x5D: 0xC5, // Å
+		0x5E: 0xDC, // Ü
+		0x60: 0xE9, // é
+		0x7B: 0xE6, // æ
+		0x7C: 0xF8, // ø
+		0x7D: 0xE5, // å
+		0x7E: 0xFC, // ü
+	},
+	10: { // Denmark II
+		0x40: 0xC9, // É
+		0x5B: 0xC6, // Æ
+		0x5C: 0xD8, // Ø
+		0x5D: 0xC5, // Å
+		0x5E: 0xDC, // Ü
+		0x60: 0xE9, // é
+		0x7B: 0xE6, // æ
+		0x7C: 0xF8, // ø
+		0x7D: 0xE5, // å
+		0x7E: 0xFC, // ü
+	},
+	11: { // Spain II
+		0x40: 0xE1, // á
+		0x5B: 0xA1, // ¡
+		0x5C: 0xD1, // Ñ
+		0x5D: 0xBF, // ¿
+		0x5E: 0xE9, // é
+		0x7B: 0xED, // í
+		0x7C: 0xF1, // ñ
+		0x7D: 0xF3, // ó
+		0x7E: 0xFA, // ú
+	},
+	12: { // Latin America
+		0x40: 0xE1, // á
+		0x5B: 0xA1, // ¡
+		0x5C: 0xD1, // Ñ
+		0x5D: 0xBF, // ¿
+		0x5E: 0xE9, // é
+		0x60: 0xFC, // ü
+		0x7B: 0xED, // í
+		0x7C: 0xF1, // ñ
+		0x7D: 0xF3, // ó
+		0x7E: 0xFA, // ú
+	},
+	13: { // Korea
+		0x5C: 'W',
+	},
+	64: { // Legal (curly quotes fall back to ASCII; dagger/trademark unmapped, see comment above)
+		0x40: 0xA7, // §
+		0x5B: 0xB0, // °
+		0x5C: '\'', // '
+		0x5D: '"',  // "
+		0x5E: 0xB6, // ¶
+		0x7B: 0xA9, // ©
+		0x7C: 0xAE, // ®
+	},
+}
+
 type trackingReader struct {
 	r   io.Reader
 	off int64
@@ -118,6 +256,7 @@ type ParserState struct {
 	Condensed           bool
 	IntercharacterSpace int // in 1/21600 inch
 	Color               int // 0: Black, 1: Magenta, 2: Cyan, 3: Violet, 4: Yellow, 5: Orange, 6: Green
+	CharSet             int // International character set index (ESC R n); 0 = USA (no substitution)
 
 	// Temporary states
 	DoubleWidthOneLine bool
@@ -226,7 +365,12 @@ func (s *ParserState) addText(text string) {
 	}
 	for i := 0; i < len(text); i++ {
 		ch := text[i]
-		chStr := string(ch)
+		if s.CharSet != 0 {
+			if sub, ok := intlCharSets[byte(s.CharSet)][ch]; ok {
+				ch = sub
+			}
+		}
+		chStr := string([]byte{ch}) // byte-for-byte, not string(ch) which UTF-8-encodes bytes >= 128
 		page := s.getPage()
 
 		font := s.activeFont()
@@ -336,7 +480,7 @@ func Parse(r io.Reader) ([]*Page, error) {
 			}
 		default:
 			// Printable character
-			s.addText(string(b))
+			s.addText(string([]byte{b})) // byte-for-byte, not string(b) which UTF-8-encodes bytes >= 128
 		}
 	}
 
@@ -572,7 +716,11 @@ func (s *ParserState) handleESC(r io.Reader) error {
 		s.RightMargin = int(val) * s.charWidth()
 
 	case 'R': // ESC R n (International character set)
-		_, _ = readByte(r)
+		val, err := readByte(r)
+		if err != nil {
+			return err
+		}
+		s.CharSet = int(val)
 
 	case 'S': // ESC S n (Select sub/superscript)
 		val, err := readByte(r)
